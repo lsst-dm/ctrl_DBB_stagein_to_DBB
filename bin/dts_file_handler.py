@@ -158,18 +158,18 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
 
             new_fullname = move_file_to_archive(config, delivery_fullname,
                                                 archive_rel_path, dts_md5sum)
-            miscutils.fwdebug_print("%s: fullname in archive %s" % (delivery_fullname, 
+            miscutils.fwdebug_print("%s: fullname in archive %s" % (delivery_fullname,
                                                                     new_fullname))
             filemgmt.register_file_in_archive(new_fullname, config['archive_name'])
 
             # if success
-            miscutils.fwdebug_print("%s: success.  committing to db" % (delivery_fullname)) 
+            miscutils.fwdebug_print("%s: success.  committing to db" % (delivery_fullname))
             filemgmt.commit()
             os.unlink(notify_file)
         else:
             handle_bad_file(config, notify_file, delivery_fullname, new_fullname, filemgmt,
                             ftype, metadata, disk_info, "Invalid file")
-            
+
     except Exception as err:
         (extype, exvalue, trback) = sys.exc_info()
         print "******************************"
@@ -292,7 +292,9 @@ def get_list_files(notify_dir, delivery_dir):
     filenames = next(os.walk(notify_dir))[2]
 
     delivery_filenames = []
-    for filen in filenames:
+
+    # sort by delivery order by using time of notification file
+    for filen in sorted(filenames, key=lambda name: os.path.getmtime(name)):
         #print filen
         nfile = "%s/%s" % (notify_dir, filen)
         dfile = "%s/%s" % (delivery_dir, re.sub('.dts$', '', filen))
