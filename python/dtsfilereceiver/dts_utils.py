@@ -7,8 +7,6 @@
 """ Miscellaneous functions for the DTS file accept and receiver codes """
 
 import re
-import datetime
-from dateutil.parser import parse
 
 ######################################################################
 def read_config(cfgfile):
