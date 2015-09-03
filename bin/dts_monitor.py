@@ -525,7 +525,7 @@ def create_full_html_filename():
         monitor_html = "%s/%s" % (output_base, htmlfilename)
     elif 'USER' in os.environ:
         user = os.environ['USER']
-        if user == 'metrics':
+        if user == 'databot2':
             output_base = "/work/QA/technical/dts"
         else:
             output_base = "/home/%s/public_html" % (user)
