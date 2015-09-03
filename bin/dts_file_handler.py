@@ -294,10 +294,10 @@ def get_list_files(notify_dir, delivery_dir):
     delivery_filenames = []
 
     # sort by delivery order by using time of notification file
-    for filen in sorted(filenames, key=lambda name: os.path.getmtime(name)):
+    for filen in sorted(filenames, key=lambda name: os.path.getmtime(os.path.join(notify_dir, name))):
         #print filen
-        nfile = "%s/%s" % (notify_dir, filen)
-        dfile = "%s/%s" % (delivery_dir, re.sub('.dts$', '', filen))
+        nfile = os.path.join(notify_dir, filen)
+        dfile = os.path.join(delivery_dir, re.sub('.dts$', '', filen))
         delivery_filenames.append([nfile, dfile])
 
     return delivery_filenames
