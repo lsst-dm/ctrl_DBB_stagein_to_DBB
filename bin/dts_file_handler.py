@@ -132,7 +132,10 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
         valdict = fmutils.get_config_vals({}, config, filetype_class.requested_config_vals())
         dtsftobj = filetype_class(dbh=filemgmt, config=valdict)
 
-        if filemgmt.check_valid(ftype, delivery_fullname):
+        if filemgmt.is_file_in_archive([delivery_fullname], config['archive_name']):
+            handle_bad_file(config, notify_file, delivery_fullname, None, filemgmt,
+                            ftype, None, None, "Duplicate file")
+        elif filemgmt.check_valid(ftype, delivery_fullname):
             starttime = datetime.now()
             results = filemgmt.register_file_data(ftype, [delivery_fullname], task_id, False, None)
             endtime = datetime.now()
@@ -310,6 +313,7 @@ def main(argv):
     #print args
 
     config = dtsutils.read_config(args['config'])
+    config['get_db_config'] = True
 
     filepairs = get_list_files(config['delivery_notice_dir'], config['delivery_dir'])
     #print filepairs
