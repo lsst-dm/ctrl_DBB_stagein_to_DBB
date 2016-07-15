@@ -33,8 +33,14 @@ NITESUM_BASE = "http://des-ops.fnal.gov:8080/nightsum/"
 
 # desar3
 DELIVERY_LOG = "/local/dts/logs/dts.log"
+DELIVERY_DIR = "/local/dts/delivery"
 ACCEPT_LOG_DIR = "/local/dts_desdm/logs/accept_dts_delivery_logs"
 HANDLER_LOG_DIR = "/local/dts_desdm/logs/dts_file_handler_logs"
+
+
+def count_num_files_in_delivery_dir():
+    """ Count the number of files in the delivery directory """
+    return len(os.listdir(DELIVERY_DIR))
 
 
 def convert_dts_log_timestamp(dts_ts):
@@ -245,6 +251,8 @@ def print_summary_html(timestamp, nite_info, extra_info, nitelist, htmlfile, cro
                  extra_info['last_accept'])
         htmlfh.write("<li>last time file processed (cron job ran with work to do): %s</li>\n" % \
                  extra_info['last_processed'])
+        htmlfh.write("<li>number of files in DTS delivery directory (%s): %s</li>\n" % \
+                 (DELIVERY_DIR, extra_info['num_delivery']))
         htmlfh.write("<li>last file processed error: %s</li>\n" % extra_info['last_processed_err'])
         htmlfh.write("<li>last DTS transfer summary (seconds): %s</li>\n" % extra_info['last_xsum'])
         htmlfh.write("<li>last DTS ERR message: %s</li>\n" % extra_info['last_dts_err'])
@@ -454,6 +462,7 @@ def gather_lasts():
     extra_info['last_processed'] = get_timestamp_last_processed()
     extra_info['last_xsum'] = get_last_transfer_summary()
     extra_info['last_dts_err'] = get_last_dts_err()
+    extra_info['num_delivery'] = count_num_files_in_delivery_dir()
     return extra_info
 
 
