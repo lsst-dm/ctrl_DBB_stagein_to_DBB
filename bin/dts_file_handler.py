@@ -21,6 +21,8 @@ import despymisc.miscutils as miscutils
 import filemgmt.fmutils as fmutils
 import filemgmt.disk_utils_local as diskutils
 import dtsfilereceiver.dts_utils as dtsutils
+import intgutils.replace_funcs as replfuncs
+
 
 ################################################################
 def read_notify_file(notify_file):
@@ -126,18 +128,12 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
         if miscutils.fwdebug_check(3, "DTSFILEHANDLER_DEBUG"):
             miscutils.fwdebug_print("filetype = %s" % ftype)
 
-        # dynamically load dts class specific to filetype
-        classkey = 'dts_filetype_class_' + ftype
-        filetype_class = miscutils.dynamically_load_class(config[classkey])
-        valdict = fmutils.get_config_vals({}, config, filetype_class.requested_config_vals())
-        dtsftobj = filetype_class(dbh=filemgmt, config=valdict)
-
         if filemgmt.is_file_in_archive([delivery_fullname], config['archive_name']):
             handle_bad_file(config, notify_file, delivery_fullname, None, filemgmt,
                             ftype, None, None, "Duplicate file")
         elif filemgmt.check_valid(ftype, delivery_fullname):
             starttime = datetime.now()
-            results = filemgmt.register_file_data(ftype, [delivery_fullname], task_id, False, None)
+            results = filemgmt.register_file_data(ftype, [delivery_fullname], None, task_id, False, None, None)
             endtime = datetime.now()
             miscutils.fwdebug_print("%s: gathering and registering file data (%0.2f secs)" % \
                                     (delivery_fullname, (endtime - starttime).total_seconds()))
@@ -155,7 +151,13 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
                                                                      md5sum_before_move))
                     raise IOError("md5sum in delivery dir not the same as DTS-provided md5sum")
 
-            archive_rel_path = dtsftobj.get_archive_path(delivery_fullname)
+            # get path 
+            patkey = 'dirpat_' + ftype
+            miscutils.fwdebug_print('patkey = %s' % patkey)
+            dirpat = config['directory_pattern'][config[patkey]]['ops']
+            miscutils.fwdebug_print('dirpat = %s' % dirpat)
+            archive_rel_path = replfuncs.replace_vars_single(dirpat, metadata)
+                
             if miscutils.fwdebug_check(3, "DTSFILEHANDLER_DEBUG"):
                 miscutils.fwdebug_print('archive_rel_path = %s' % archive_rel_path)
 
@@ -327,6 +329,7 @@ def main(argv):
         filemgmt = filemgmt_class(initvals=config)
         config['filetype_metadata'] = filemgmt.get_all_filetype_metadata()
         config['archive'] = filemgmt.get_archive_info()
+        config['directory_pattern'] = filemgmt.query_results_dict('select * from OPS_DIRECTORY_PATTERN', 'name')
 
         task_id = config['dts_task_id']  # get task id for dts
 
