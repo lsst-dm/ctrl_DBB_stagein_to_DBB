@@ -323,7 +323,7 @@ def main(argv):
     if len(filepairs) > 0:
         filemgmt = None
 
-        print config['classmgmt']
+        #print config['classmgmt']
         filemgmt_class = miscutils.dynamically_load_class(config['classmgmt'])
         #valDict = fmutils.get_config_vals({}, config, filemgmt_class.requested_config_vals())
         filemgmt = filemgmt_class(initvals=config)
