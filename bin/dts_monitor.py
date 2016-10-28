@@ -6,8 +6,9 @@
 
 """ Create a web page used to monitor the DESDM side of DTS """
 
+####### Design comment:   Never extra if delivered=False, but missing if delivered=True
+
 import argparse
-import despydb.desdbi as desdbi
 from datetime import datetime, timedelta
 import sys
 import os
@@ -20,11 +21,16 @@ import urllib2
 import subprocess
 from dateutil.parser import parse
 
+import despydb.desdbi as desdbi
+import despymisc.create_special_metadata as smfuncs
+
 
 verbose = False
-NUM_NITES = 21
+DEFAULT_NUM_NITES = 14
+NITE_COLORS = ['silver', 'olive', 'grey', 'teal']
 #NITESUM_BASE = "http://decam03.fnal.gov:8080/nightsum/"
 NITESUM_BASE = "http://des-ops.fnal.gov:8080/nightsum/"
+dts_archive_path = '/archive_data/desarchive/DTS'
 
 # desar2
 #DELIVERY_LOG = "/home/databot/dts.log"
@@ -36,13 +42,77 @@ DELIVERY_LOG = "/local/dts/logs/dts.log"
 DELIVERY_DIR = "/local/dts/delivery"
 ACCEPT_LOG_DIR = "/local/dts_desdm/logs/accept_dts_delivery_logs"
 HANDLER_LOG_DIR = "/local/dts_desdm/logs/dts_file_handler_logs"
+FAIL_DIR = "/des006/DTSfail"
 
 
+
+desdm_db_failure = False
+sispi_db_failure = False
+
+
+
+######################################################################
+def combine_sne_info(nitelist, info):
+    
+    sispi_sne = info['sispi_sne']
+    desdm_sne = info['desdm']
+    manexposures = info['manifest_exposures']
+    manifests = info['manifests']
+
+    html_info = {}
+    for nite in nitelist:
+        html_info[nite] = {}
+        for expnum in sispi_sne[nite]:
+            html_info[nite][expnum] = sispi_sne[nite][expnum]
+            hdict = html_info[nite][expnum]
+            if expnum in desdm_sne:
+                hdict['desdm'] = 'Y'
+                hdict['enite'] = desdm_sne[expnum]['nite']
+                hdict['efield'] = desdm_sne[expnum]['field']
+                hdict['eband'] = desdm_sne[expnum]['band']
+                hdict['eexptime'] = desdm_sne[expnum]['exptime']
+            else:
+                hdict['desdm'] = 'N'
+                hdict['enite'] = None
+                hdict['efield'] = None
+                hdict['eband'] = None
+                hdict['eexptime'] = None
+
+            if nite in manifests and hdict['field'] in manifests[nite] and \
+                    hdict['band'] in manifests[nite][hdict['field']]:
+                hdict['desdm_manifest'] = 'Y'
+                #print nite, hdict['field'], hdict['band'], manifests[nite][hdict['field']][hdict['band']]
+                hdict['manifest'] = ','.join(manifests[nite][hdict['field']][hdict['band']])
+            else:
+                #print "Missing manifest for:   nite: %s, field: %s, band: %s" % (nite, hdict['field'], hdict['band'])
+                hdict['desdm_manifest'] = 'N'
+
+
+            if expnum in manexposures:
+                mdict = manexposures[expnum]
+                hdict['meexptime'] = mdict['exptime']
+                hdict['mefield'] = mdict['field']
+                hdict['meband'] = mdict['band']
+                hdict['manifest'] = mdict['manifest_filename']
+            else:
+                hdict['meexptime'] = None
+                hdict['mefield'] = None
+                hdict['meband'] = None
+
+    return html_info
+
+
+######################################################################
 def count_num_files_in_delivery_dir():
     """ Count the number of files in the delivery directory """
-    return len(os.listdir(DELIVERY_DIR))
+
+    cnt = None
+    if os.path.exists(DELIVERY_DIR):
+        cnt = len(os.listdir(DELIVERY_DIR))
+    return cnt
 
 
+######################################################################
 def convert_dts_log_timestamp(dts_ts):
     """ convert dts log timestamp to local timestamp """
     local_dt = None
@@ -80,30 +150,42 @@ def parse_timestamp(line):
 
 def get_last_timestamp_log_file(logfile):
     """ get the last timestamp from a log file """
-    with open(logfile, "rb") as logfh:
-        logfh.seek(-2, 2)            # Jump to the second last byte.
-        while logfh.read(1) != "\n": # Until EOL is found...
-            logfh.seek(-2, 1)        # ...jump back the read byte plus one more.
-        last = logfh.readline()      # Read last line.
 
-    return parse_timestamp(last)
+    laststamp = 'N/A'
+    if logfile is not None and os.path.exists(logfile):
+        try:
+            with open(logfile, "rb") as logfh:
+                logfh.seek(-2, 2)            # Jump to the second last byte.
+                while logfh.read(1) != "\n": # Until EOL is found...
+                    logfh.seek(-2, 1)        # ...jump back the read byte plus one more.
+                last = logfh.readline()      # Read last line.
+    
+                laststamp = parse_timestamp(last)
+        except IOError:
+            pass
+
+    return laststamp
 
 
 def get_latest_log_file(basedir):
     """ get the latest log filename """
     logfile = basedir
 
-    # get max year
-    years = os.listdir(basedir)
-    logfile += '/'+max(years)
+    if os.path.exists(basedir):
+        # get max year
+        years = os.listdir(basedir)
+        logfile += '/'+max(years)
 
-    # get max month
-    months = os.listdir(logfile)
-    logfile += '/'+max(months)
+        # get max month
+        months = os.listdir(logfile)
+        logfile += '/'+max(months)
 
-    # get max filename
-    filenames = os.listdir(logfile)
-    logfile += '/'+max(filenames)
+        # get max filename
+        filenames = os.listdir(logfile)
+        logfile += '/'+max(filenames)
+    else:
+        logfile = None
+    
 
     return logfile
 
@@ -120,19 +202,21 @@ def get_timestamp_last_processed():
 
     latest_log = get_latest_log_file(logdir)
 
-    latest_log_dir = os.path.dirname(latest_log)
-    filelist = glob.glob('%s/*.log' % latest_log_dir)
-    #print filelist
-    files = ' '.join(filelist)
-    #print files
+    out = ''
+    if latest_log is not None:
+        latest_log_dir = os.path.dirname(latest_log)
+        filelist = glob.glob('%s/*.log' % latest_log_dir)
+        #print filelist
+        files = ' '.join(filelist)
+        #print files
 
-    last_line = ""
-    cmd = 'grep -h handle_file %s' % files    # no filename
-    if verbose:
-        print cmd
-    process = subprocess.Popen(cmd.split(), shell=False,
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    out = process.communicate()[0]
+        last_line = ""
+        cmd = 'grep -h handle_file %s' % files    # no filename
+        if verbose:
+            print cmd
+        process = subprocess.Popen(cmd.split(), shell=False,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out = process.communicate()[0]
     last_line = None
     if len(out) > 0:
         outlines = out.strip('\n').split('\n')
@@ -140,7 +224,8 @@ def get_timestamp_last_processed():
             last_line = outlines[-1]
     if verbose:
         print "last_line:", last_line
-    last_processed = ""
+
+    last_processed = "N/A"
     if last_line is not None:
         last_processed = parse_timestamp(last_line)
     if verbose:
@@ -153,12 +238,15 @@ def get_last_transfer_summary():
     dtslog = DELIVERY_LOG
 
     last_line = None
-    cmd = 'grep XSUM %s' % dtslog
-    if verbose:
-        print cmd
-    process = subprocess.Popen(cmd.split(), shell=False,
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    out = process.communicate()[0]
+    out = ''
+    if os.path.exists(dtslog):
+        cmd = 'grep XSUM %s' % dtslog
+        if verbose:
+            print cmd
+        process = subprocess.Popen(cmd.split(), shell=False,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out = process.communicate()[0]
+
     if len(out) > 0:
         outlines = out.split('\n')
         if len(outlines) >= 2:
@@ -168,7 +256,7 @@ def get_last_transfer_summary():
     if verbose:
         print "last_line:", last_line
 
-    msg_str = ""
+    msg_str = ''
     if last_line is not None:
         tstamp = last_line[:13]
         local_ts = convert_dts_log_timestamp(tstamp)
@@ -182,14 +270,16 @@ def get_last_dts_err():
     """ get the last error message from the dts log """
     dtslog = DELIVERY_LOG
 
-    cmd = 'grep ERR %s' % dtslog
-    if verbose:
-        print cmd
-    process = subprocess.Popen(cmd.split(), shell=False,
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    out = process.communicate()[0]
-
+    out = ''
     last_line = None
+    if os.path.exists(dtslog):
+        cmd = 'grep ERR %s' % dtslog
+        if verbose:
+            print cmd
+        process = subprocess.Popen(cmd.split(), shell=False,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out = process.communicate()[0]
+
     if len(out) > 0:
         outlines = out.split('\n')
         if len(outlines) >= 2:
@@ -200,7 +290,7 @@ def get_last_dts_err():
     if verbose:
         print "last_line:", last_line
 
-    msg_str = ""
+    msg_str = ''
     if last_line is not None:
         tstamp = last_line[:13]
         local_ts = convert_dts_log_timestamp(tstamp)
@@ -229,14 +319,218 @@ def get_nightly_summary_index():
     return nite_summary_urls
 
 
-def print_summary_html(timestamp, nite_info, extra_info, nitelist, htmlfile, cron=0):
+######################################################################
+def print_exposure_html(timestamp, nitelist, info, reptype, cron=0):
+    htmlfile = create_full_html_filename('dtsmonitor_exp_%s.html' % reptype)
+
+    with open(htmlfile, 'w') as htmlfh:
+        htmlfh.write("<html>\n")
+        htmlfh.write("<body>\n")
+        htmlfh.write("<p>\n")
+        htmlfh.write("%s exposure report for %s nites generated at %s by user %s on %s<br>\n" % \
+                 (reptype, len(nitelist), timestamp.strftime("%Y/%m/%d %H:%M:%S"),
+                  getpass.getuser(), socket.gethostname()))
+        tdelta = (datetime.now()-timestamp)
+        htmlfh.write("(")
+        if cron > 0:
+            htmlfh.write("Running in cron every %s minutes.  " % cron)
+        htmlfh.write("Took %0d.%04d secs to generate)<br>" % (tdelta.seconds, tdelta.microseconds))
+        htmlfh.write("</p>\n")
+        htmlfh.write("<table border=1 cellpad=3>\n")
+        nitecnt = 0
+        for nite in nitelist:
+            explist = list(set(info['sispi_delivered'][nite].keys()) | set(info['sispi_not_delivered'][nite].keys()) | set(info['desdm'][nite].keys()))
+            for expnum in sorted(explist, reverse=True): 
+                
+                filename = 'DECam_%08d.fits.fz' % expnum
+                if filename in info['failures']:
+                    expstate = 'fail'
+                elif expnum not in info['desdm'][nite]:
+                    if expnum in info['sispi_delivered'][nite]:
+                        expinfo = info['sispi_delivered'][nite][expnum]
+                        expstate = 'missing'
+                    elif expnum in info['sispi_not_delivered'][nite]:
+                        expinfo = info['sispi_not_delivered'][nite][expnum]
+                        if reptype == 'full':
+                            expstate = 'not delivered'
+                        else:
+                            expstate = 'skip'
+                elif expnum in info['desdm'][nite]:
+                    expinfo = info['desdm'][nite][expnum]
+                    if expnum in info['sispi_delivered'][nite]:
+                        if reptype != 'short':
+                            expstate = 'ok'
+                        else:
+                            expstate = 'skip'
+                    elif expnum not in info['sispi_not_delivered'][nite]:
+                        expstate = 'extra'
+
+                if expstate != 'skip':
+                    htmlfh.write("<tr>")
+                    for k in ['obstype', 'filter', 'object', 'propid', 'proposer', 'program']:
+                        if k not in expinfo or expinfo[k] is None:
+                            expinfo[k]="&nbsp;"
+
+                    if len(expinfo['object']) > 25:
+                        expinfo['object'] = expinfo['object'][:24]
+                    if len(expinfo['proposer']) > 15:
+                        expinfo['proposer'] = expinfo['proposer'][:14]
+                    if len(expinfo['program']) > 40:
+                        expinfo['program'] = expinfo['program'][:39]
+
+                    # nite, expnum, field, band, exptime, desdm, manifest_filename
+                    nitecolor = NITE_COLORS[nitecnt % len(NITE_COLORS)]
+                    htmlfh.write('<td style="background-color:%s">%s</td>' % (nitecolor, nite))
+                    htmlfh.write("<td>%s</td>" % expnum)
+                    htmlfh.write("<td>%s</td>" % expinfo['obstype'])
+
+                    if expinfo['band'] is None:
+                        if expinfo['obstype'] in ['zero', 'calibration'] or expinfo['object'] in ['pointing', 'focus', 'donut']:
+                            htmlfh.write("<td>&nbsp;</td>")
+                        else:
+                            htmlfh.write('<td style="background-color:orange">(filter: %s)</td>' % (expinfo['filter'].split()[0]))
+                    else:
+                        htmlfh.write("<td>%s</td>" % expinfo['band'])
+                    htmlfh.write("<td>%s</td>" % expinfo['propid'])
+                    htmlfh.write("<td>%s</td>" % expinfo['proposer'])
+                    htmlfh.write("<td>%s</td>" % expinfo['object'])
+                    htmlfh.write("<td>%s</td>" % expinfo['program'])
+
+
+                    if expstate == 'fail':
+                        htmlfh.write('<td style="background-color:red">%s</td>' % info['failures'][filename]['rejected_msg'])
+                    elif expstate == 'missing':
+                        htmlfh.write('<td style="background-color:orange">%s</td>' % 'Missing')
+                    elif expstate == 'extra':
+                        htmlfh.write('<td style="background-color:cyan">%s</td>' % 'Extra')
+                    elif expstate == 'ok':
+                        htmlfh.write('<td>&nbsp;</td>')
+                    elif expstate == 'not delivered':
+                        htmlfh.write('<td>delivered=False</td>')
+                    else:
+                        htmlfh.write('<td style="background-color:red">internal error</td>')
+                    htmlfh.write("</tr>")
+
+            nitecnt += 1
+        htmlfh.write("</table>\n")
+        htmlfh.write("</p>\n")
+        htmlfh.write("</body>\n")
+        htmlfh.write("</html>")
+
+
+
+######################################################################
+def print_sne_html(timestamp, nitelist, info, cron=0):
+
+    htmlfile = create_full_html_filename('dtsmonitor_sne.html')
+
+    desdm_info = info['desdm']
+    html_info = info['sne']
+
+    htmlfh = open(htmlfile, 'w')
+    htmlfh.write("<html>\n")
+    htmlfh.write('<title>SNe DTS monitor</title>\n')
+    htmlfh.write("<body>\n")
+    htmlfh.write("<p>\n")
+    htmlfh.write("SNe DTS report for %s nites generated at %s by user %s on %s<br>\n" % \
+             (len(nitelist), timestamp.strftime("%Y/%m/%d %H:%M:%S"),
+              getpass.getuser(), socket.gethostname()))
+    tdelta = (datetime.now()-timestamp)
+    htmlfh.write("(")
+    if cron > 0:
+        htmlfh.write("Running in cron every %s minutes.  " % cron)
+    htmlfh.write("Took %0d.%04d secs to generate)<br>" % (tdelta.seconds, tdelta.microseconds))
+    htmlfh.write("</p>\n")
+    htmlfh.write("Descriptions\n")
+    htmlfh.write("<ul>\n")
+    htmlfh.write("<li>All yellow line means that the line was skipped when ingesting manifest file</li>\n")
+    htmlfh.write("<li>Orange manifest_filename means missing from DESDM archive (probably waiting for delivery)</li>\n")
+    htmlfh.write("<li>Orange expnum means missing from DESDM archive (probably waiting for delivery if delivered column is True)</li>\n")
+    htmlfh.write("<li>Only yellow delivered column means probably not going to get that exposure</li>\n")
+    htmlfh.write("<li>Red means problem that needs to be investigated (usually mismatch between manifest file and exposure metadata)</li>\n") 
+    htmlfh.write("</ul>\n")
+
+    htmlfh.write("<table border=1 cellpad=3>\n")
+
+    htmlfh.write('<tr>\n')
+    htmlfh.write('<th>nite</th>\n')
+    htmlfh.write('<th>field</th>\n')
+    htmlfh.write('<th>band</th>\n')
+    htmlfh.write('<th>manifest filename</th>\n')
+    htmlfh.write('<th>seq</th>\n')
+    htmlfh.write('<th>expnum</th>\n')
+    htmlfh.write('<th>exptime</th>\n')
+    htmlfh.write('<th>delivered</th>\n')
+    htmlfh.write('</tr>\n')
+    for nite in nitelist:
+        if nite in html_info and len(html_info[nite]) > 0:
+            ndict = html_info[nite]
+            for expnum, edict in sorted(ndict.items()):
+                dmdict = None
+                if expnum in desdm_info[nite]:
+                    dmdict = desdm_info[nite][expnum]
+
+                if edict['skip']:
+                    htmlfh.write('<tr style="background-color:yellow">\n')
+                else:
+                    htmlfh.write('<tr>\n')
+                htmlfh.write('<td>%s</td>\n' % nite)
+                if dmdict is not None and edict['field'] != dmdict['field']:
+                    htmlfh.write('<td style="background-color:red">%s/%s</td>\n' % (edict['field'], dmdict['field']))
+                else:
+                    htmlfh.write('<td>%s</td>\n' % edict['field'])
+
+                if dmdict is not None and edict['band'] != dmdict['band']:
+                    htmlfh.write('<td style="background-color:red">%s/%s</td>\n' % (edict['band'], dmdict['band']))
+                else:
+                    htmlfh.write('<td>%s</td>\n' % edict['band'])
+
+                if edict['desdm_manifest'] == 'N':
+                    htmlfh.write('<td style="background-color:orange">%s</td>\n' % edict['manifest'])
+                else:
+                    htmlfh.write('<td>%s</td>\n' % edict['manifest'])
+
+                htmlfh.write('<td>%s/%s</td>\n' % (edict['seqnum'],edict['seqtot']))
+
+                if dmdict is None:
+                    htmlfh.write('<td style="background-color:orange">%s</td>' % edict['expnum'])
+                else:
+                    htmlfh.write('<td>%s</td>\n' % edict['expnum'])
+
+                if dmdict is not None and edict['exptime'] != dmdict['exptime']:
+                    htmlfh.write('<td style="background-color:red">%s/%s</td>\n' % (edict['exptime'], dmdict['exptime']))
+                else:
+                    htmlfh.write('<td>%s</td>\n' % edict['exptime'])
+
+                if not edict['delivered']:
+                    htmlfh.write('<td style="background-color:yellow">%s</td>\n' % edict['delivered'])
+                else:
+                    htmlfh.write('<td>%s</td>\n' % edict['delivered'])
+                htmlfh.write('</tr>\n')
+
+    htmlfh.write('</table>\n')
+    htmlfh.write('</p>\n')
+    htmlfh.write('</body>\n')
+    htmlfh.write('</html>\n')
+
+    htmlfh.close()
+
+
+
+
+######################################################################
+def print_summary_html(timestamp, nitelist, nite_info, extra_info, info, cron=0):
     """ print summary in html """
+
+    htmlfile = create_full_html_filename('dtsmonitor.html')
+    if verbose:
+        print "Writing html to %s" % (htmlfile)
     with open(htmlfile, "w") as htmlfh:
         htmlfh.write("<html>\n")
         htmlfh.write("<body>\n")
         htmlfh.write("<p>\n")
         htmlfh.write("Report for %s nites generated at %s by user %s on %s<br>\n" % \
-                 (NUM_NITES, timestamp.strftime("%Y/%m/%d %H:%M:%S"),
+                 (len(nitelist), timestamp.strftime("%Y/%m/%d %H:%M:%S"),
                   getpass.getuser(), socket.gethostname()))
         tdelta = (datetime.now()-timestamp)
         htmlfh.write("(")
@@ -259,6 +553,20 @@ def print_summary_html(timestamp, nite_info, extra_info, nitelist, htmlfile, cro
         htmlfh.write("</ul>\n")
         htmlfh.write("</p>\n")
 
+        htmlfh.write("<p>\n")
+        htmlfh.write("<h2>Other more detailed web pages</h2>\n")
+        htmlfh.write("<ul>\n")
+        #htmlfh.write('<li><a href="http://deslogin.cosmology.illinois.edu/~mgower/dtsmonitor_exp_short.html">Only differences by exposures</a>\n')
+        #htmlfh.write('<li><a href="http://deslogin.cosmology.illinois.edu/~mgower/dtsmonitor_exp_normal.html">Normal list exposures</a>\n')
+        #htmlfh.write('<li><a href="http://deslogin.cosmology.illinois.edu/~mgower/dtsmonitor_exp_full.html">Full list exposures</a>\n')
+        #htmlfh.write('<li><a href="http://deslogin.cosmology.illinois.edu/~mgower/dtsmonitor_sne.html">SNe</a>\n')
+        htmlfh.write('<li><a href="dtsmonitor_exp_short.html">Only differences by exposures</a>\n')
+        htmlfh.write('<li><a href="dtsmonitor_exp_normal.html">Normal list exposures</a>\n')
+        htmlfh.write('<li><a href="dtsmonitor_exp_full.html">Full list exposures</a>\n')
+        htmlfh.write('<li><a href="dtsmonitor_sne.html">SNe</a>\n')
+        htmlfh.write("</ul>\n")
+        htmlfh.write("</p>\n")
+    
 
         # column descriptions
         htmlfh.write("<p>\n")
@@ -270,12 +578,13 @@ def print_summary_html(timestamp, nite_info, extra_info, nitelist, htmlfile, cro
         htmlfh.write("<li>DESDM: number of exposures in desoper DB (are officially in DESDM archive)</li>\n")
         htmlfh.write("<li>Missing: number of exposures in SISPI, but not in DESDM.<br>Only includes those that should be in DESDM (calibrations, des queue, SMASH project)</li>\n")
         htmlfh.write("<li>Extra: number of exposures in DESDM, but not in SISPI.<br>Same rules as for Missing</li>\n")
+        htmlfh.write("<li>Manifest: suspect manifest file not transfered/ingested because missing exposures in manifest_exposure table (missing exposure count)</li>\n")
         htmlfh.write("</ul>\n")
 
 
         # table of information
         htmlfh.write("<table border=1 cellpad=3>\n")
-        htmlfh.write("<tr><th>nite</th><th>nite sum</th><th>SISPI</th><th>DESDM</th><th>Missing</th><th>Extra</th></tr>\n")
+        htmlfh.write("<tr><th>nite</th><th>nite sum</th><th>SISPI</th><th>DESDM</th><th>Failed</th><th>Missing</th><th>Extra</th><th>Manifest</th><th>Exposures</th></tr>\n")
         for nite in sorted(nitelist, reverse=True):
             htmlfh.write("<tr>")
             htmlfh.write("<td>%s</td>" % nite)
@@ -287,6 +596,10 @@ def print_summary_html(timestamp, nite_info, extra_info, nitelist, htmlfile, cro
 
             htmlfh.write("<td>%s</td>" % nite_info[nite]['cnt_sispi'])
             htmlfh.write("<td>%s</td>" % nite_info[nite]['cnt_desdm'])
+            if nite_info[nite]['cnt_fail'] != 0:
+                htmlfh.write('<td style="background-color:red">%s</td>' % nite_info[nite]['cnt_fail'])
+            else:
+                htmlfh.write("<td>%s</td>" % nite_info[nite]['cnt_fail'])
             if nite_info[nite]['cnt_missing'] != 0:
                 htmlfh.write('<td style="background-color:orange">%s</td>' % nite_info[nite]['cnt_missing'])
             else:
@@ -295,6 +608,39 @@ def print_summary_html(timestamp, nite_info, extra_info, nitelist, htmlfile, cro
                 htmlfh.write('<td style="background-color:cyan">%s</td>' % nite_info[nite]['cnt_extra'])
             else:
                 htmlfh.write("<td>%s</td>" % nite_info[nite]['cnt_extra'])
+            if nite_info[nite]['cnt_missing_manifest'] > 0:
+                htmlfh.write('<td style="background-color:orange">%s</td>' % nite_info[nite]['cnt_missing_manifest'])
+            else:
+                htmlfh.write("<td>&nbsp;</td>")
+
+            # last column with missing, failed, or extra expnums
+            htmllines = []
+            if nite_info[nite]['cnt_missing'] != 0:
+                smdict = nite_info[nite]['summary_missing']
+                for propid in smdict.keys():
+                    for obstype in smdict[propid].keys():
+                        htmllines.append('%s: %s: %s' % (propid, obstype, ', '.join([str(x) for x in smdict[propid][obstype]])))
+
+            if nite_info[nite]['cnt_fail'] != 0:
+                smdict = nite_info[nite]['summary_fail']
+                for propid in smdict.keys():
+                    for obstype in smdict[propid].keys():
+                        htmllines.append("<font color='red'>%s: %s: %s</font>" % (propid, obstype, ', '.join([str(x) for x in smdict[propid][obstype]])))
+
+            if nite_info[nite]['cnt_extra'] != 0:
+                smdict = nite_info[nite]['summary_extra']
+                for propid in smdict.keys():
+                    for obstype in smdict[propid].keys():
+                        htmllines.append("<font color='cyan'>%s: %s: %s</font>" % (propid, obstype, ', '.join([str(x) for x in smdict[propid][obstype]])))
+
+
+            if len(htmllines) > 0:
+                htmlfh.write("<td>%s</td>" % '<br>'.join(htmllines))
+            else:
+                htmlfh.write("<td>&nbsp;</td>")
+
+
+
             htmlfh.write("</tr>\n")
         htmlfh.write("</table>\n")
         htmlfh.write("</p>\n")
@@ -311,7 +657,7 @@ def print_summary_html(timestamp, nite_info, extra_info, nitelist, htmlfile, cro
 
         htmlfh.write("<table border=1 cellpad=3>\n")
         htmlfh.write("<tr><th>rejected_date</th><th>orig_filename</th><th>rejected_msg</th></tr>\n")
-        sortfail = sorted(extra_info['failures'], key=lambda item: item['rejected_date'],
+        sortfail = sorted(info['failures'].values(), key=lambda item: item['rejected_date'],
                           reverse=True)
         for fcnt in range(0, min(20, len(sortfail))):
             htmlfh.write("<tr>\n")
@@ -325,11 +671,25 @@ def print_summary_html(timestamp, nite_info, extra_info, nitelist, htmlfile, cro
             htmlfh.write("</tr>\n")
         htmlfh.write("</table>\n")
         htmlfh.write("</p>\n")
+        htmlfh.write("<p>\n")
+        htmlfh.write("<h2>Count duplicate deliveries within date range:</h2>\n")
+        htmlfh.write("Data comes from table dts_bad_file\n")
+        htmlfh.write("<table border=1 cellpad=3>\n")
+        htmlfh.write("<tr><th>nite</th><th>count</th></tr>\n")
+        for nite in nitelist:
+            if nite in info['duplicates'] and len(info['duplicates'][nite]) > 0:
+                htmlfh.write("<tr>\n")
+                htmlfh.write("<td>%s</td>\n" % nite)
+                htmlfh.write("<td>%s</td>\n" % len(info['duplicates'][nite]))
+                htmlfh.write("</tr>\n")
+        htmlfh.write("</table>\n")
+        htmlfh.write("</p>\n")
 
         htmlfh.write("</body>\n")
         htmlfh.write("</html>")
 
 
+######################################################################
 def parse_argv(argv):
     """ Return command line arguments as dict """
     parser = argparse.ArgumentParser(description='Compare exposure DB entries for DESDM vs SISPI backup')
@@ -337,12 +697,13 @@ def parse_argv(argv):
     parser.add_argument('--des_services', action='store')
     parser.add_argument('--des_db_section', action='store', required=True)
     parser.add_argument('--sispi_db_section', action='store', required=True)
+    parser.add_argument('--num_nites', type=int, action='store', required=False, default=DEFAULT_NUM_NITES)
     parser.add_argument('--nitestr', action='store')
     parser.add_argument('--verbose', action='store_true')
     args = vars(parser.parse_args(argv))   # convert dict
     return args
 
-
+######################################################################
 def convert_sispi_date_to_nite(sispidate):
     """ Convert sispi date to nite string """
     nitesplit = sispidate.replace(hour=15)
@@ -353,85 +714,116 @@ def convert_sispi_date_to_nite(sispidate):
 
     return expnite
 
-
+######################################################################
 # SISPI db
-def get_sispi_info(des_services, sispi_db_section, nitelist):
+def get_sispi_info(dbh, nitelist, propids):
     """ Returns list of expnums in sispi db exposure table for nites """
 
-    begnite = nitelist[-1]
-    nitedate = datetime.strptime(begnite, "%Y%m%d")
-    #begdate = nitedate.replace(hour=9, tzinfo=pytz.timezone('UTC'))
-    begdate = nitedate.replace(hour=15)
-    nitedate = datetime.strptime(nitelist[0], "%Y%m%d")
-    enddate = nitedate.replace(hour=15) + timedelta(days=1)    # nite ends next date noonish
-
-
-    dbh = desdbi.DesDbi(des_services, sispi_db_section)
-    sql = "select id,date from exposure where %s <= date and date <= %s and delivered=TRUE and (flavor != 'object' or dtsqueue='des' or propid='2013B-0440');" % (dbh.get_named_bind_string("begdate"), dbh.get_named_bind_string("enddate"))
-    if verbose:
-        print sql
-        print begdate, enddate
-    curs = dbh.cursor()
-    curs.execute(sql, {'begdate':begdate, 'enddate':enddate})
-    desc = [d[0].lower() for d in curs.description]
-
-    sispi_expnums = {}
+    #print "Querying SISPI for expnums"
+    sispi_info = {}
+    sispi_not_delivered = {}
+    sispi_sne = {}
     for nite in nitelist:
-        sispi_expnums[nite] = set()
+        nitedate = datetime.strptime(nite, "%Y%m%d")
+        #begdate = nitedate.replace(hour=9, tzinfo=pytz.timezone('UTC'))
+        begdate = nitedate.replace(hour=15)
+        begstr = begdate.strftime('%Y-%m-%d %H:%M')
 
-    for row in curs:
-        rowd = dict(zip(desc, row))
-        rowd['nite'] = convert_sispi_date_to_nite(rowd['date'])
-        sispi_expnums[rowd['nite']].add(rowd['id'])
-    dbh.close()
+        enddate = begdate + timedelta(days=1)
+        endstr = enddate.strftime('%Y-%m-%d %H:%M')
+        #print begdate
+        #print enddate
 
-    return sispi_expnums
+        # removed dtsqueue='des' as keeping it assumes dtsqueue is never wrong
+        sql = "select id as expnum,propid,proposer,program,flavor as obstype,filter,object,date,seqid,seqnum,seqtot,exptime,delivered,dtsqueue from exposure where %s <= date and date <= %s and (flavor != 'object' or propid in ('%s'));" % (dbh.get_named_bind_string("begdate"), dbh.get_named_bind_string("enddate"), "','".join(propids[nite]))
+        #print sql
+        curs = dbh.cursor()
+        curs.execute(sql, {'begdate':begdate, 'enddate':enddate})
+        desc = [d[0].lower() for d in curs.description]
+
+        sispi_info[nite] = {}
+        sispi_sne[nite] = {}
+        sispi_not_delivered[nite] = {}
+        for row in curs:
+            d = dict(zip(desc, row))
+            d['nite'] = convert_sispi_date_to_nite(d['date'])
+            if d['nite'] != nite:
+                print "Warn: sispi nite mismatch", expnum
+            d['band'] = None
+            if d['filter'] is not None and d['filter'] != '': 
+                try:
+                    d['band']=smfuncs.create_band(d['filter'])
+                except:
+                    #print "smfuncs failed", d['filter'], d['obstype']
+                    pass
+            if d['delivered']:
+                sispi_info[d['nite']][d['expnum']] = d
+            else:
+                sispi_not_delivered[d['nite']][d['expnum']] = d
+    
+            # if a supernova exposure
+            if d['obstype'] == 'object': 
+                m = re.search("DES supernova", d['object'])
+                if m:
+                    sispi_sne[nite][d['expnum']] = d
+                    if d['seqid'] is not None:
+                        d['manifest'] = '(from seqid) manifest_' + re.sub('[ :-]', '', d['seqid'])
+                        if not d['seqid'].endswith('.json'):
+                            d['manifest'] += '.json'
+                    else:
+                        d['manifest'] = 'unknown'
+                    if object is not None:
+                        try:
+                            d['field'] = smfuncs.create_field(d['object'])
+                        except:
+                            d['field'] = 'unknown'
+
+    return sispi_info, sispi_not_delivered, sispi_sne
 
 
-
+######################################################################
 # DESDM db
 def get_desdm_info(dbh, nitelist):
-    """ Returns list of expnums in DESDM db exposure table for given nites """
+    """ Returns list of expnums in DESDM db exposure table for given list of nites """
+    # assumes nitelist is in reverse order
 
-    begnite = nitelist[-1]
-    endnite = nitelist[0]
-    sql = "select expnum, nite from exposure where %s <= nite and nite <= %s order by expnum" % \
-          (dbh.get_named_bind_string('begnite'), dbh.get_named_bind_string('endnite'))
-    if verbose:
-        print sql
-        print begnite, endnite
+    sql = "select expnum,nite,field,exptime,propid,proposer,program,obstype,band,object from exposure where nite=%s" % (dbh.get_named_bind_string('nite'))
     curs = dbh.cursor()
-    curs.execute(sql, {'begnite':begnite, 'endnite':endnite})
-    desc = [d[0].lower() for d in curs.description]
-
-    desdm_expnums = {}
+    #print "Querying DESDM for expnums"
+    desdm_info = {}
     for nite in nitelist:
-        desdm_expnums[nite] = set()
+        desdm_info[nite] = {}
 
-    for row in curs:
-        rowd = dict(zip(desc, row))
-        desdm_expnums[rowd['nite']].add(rowd['expnum'])
+        curs.execute(sql, {'nite': nite})
+        desc = [d[0].lower() for d in curs.description]
 
-    return desdm_expnums
+        for row in curs:
+            d = dict(zip(desc, row))
+            desdm_info[nite][d['expnum']]=d
+    return desdm_info
 
 
-def get_desdm_fail_cnt_by_nite(failures, sispi_info):
-    """ get the number of register failures by nite """
+
+def get_desdm_fail_by_nite(failures, sispi_info):
     # first make a dictionary by expnum
     # repeated failures don't count
     by_expnum = {}
-    for faild in failures:
+    for faild in failures.values():
         if 'expnum' in faild:
             if faild['expnum'] not in by_expnum:
                 by_expnum[faild['expnum']] = {}
-            by_expnum[faild['expnum']][faild['orig_filename']] = faild
+            by_expnum[faild['expnum']][faild['rejected_date']] = faild
+        #else:
+        #    print "missing expnum: ", faild
 
     by_nite = {}
     for nite in sispi_info:
-        by_nite[nite] = 0
+        by_nite[nite] = {}
         for expnum in sispi_info[nite]:
             if expnum in by_expnum:
-                by_nite[nite] += len(by_expnum[expnum])
+                by_nite[nite][expnum] = by_expnum[expnum]
+            elif int(expnum)==519365:
+                print "why %s, %s not in by_expnum for nite %s" % (expnum, type(expnum), nite), by_expnum.keys()
 
     return by_nite
 
@@ -444,14 +836,121 @@ def get_desdm_fail_info(dbh, begdate):
     curs.execute(sql, {'begdate': begdate})
     desc = [d[0].lower() for d in curs.description]
 
-    des_fail = []
+    des_fail = {}
+    duplicates = {}
     for row in curs:
         rowd = dict(zip(desc, row))
-        fmatch = re.match(r'D(\d+)_fits.fz', rowd['orig_filename'])
-        if fmatch:
-            rowd['expnum'] = fmatch.group(1).lstrip('0')
-        des_fail.append(rowd)
-    return des_fail
+        rejnite = rowd['rejected_date'].strftime('%Y%m%d') 
+        fmatch = re.match(r'DECam_(\d+).fits.fz', rowd['orig_filename'])
+        if fmatch:   # note manifest files won't match
+            rowd['expnum'] = int(fmatch.group(1))
+
+        if rowd['rejected_msg'].lower() == 'duplicate file':
+            if rejnite not in duplicates:
+                duplicates[rejnite] = []
+            duplicates[rejnite].append(rowd)
+        else:
+            des_fail[rowd['orig_filename']] = rowd
+            
+    return des_fail, duplicates
+
+
+def get_propids(dbh, nitelist):
+    """ Returns a list of propids per nite for which DESDM should be receiving non-calibration exposures """
+
+    # valid DES propid = '2013A-9999', '2012B-0005', '2012B-0001', '2013B-0440'
+    results = {}
+    if dbh is None:
+        # no DESDM DB connection, hardcode list
+        for nite in nitelist:
+            results[nite] = ['2012B-0001','2012B-0003','2012B-0005','2012B-0416','2012B-0448','2012B-3001','2012B-3002','2012B-3003','2012B-3004','2012B-3005','2012B-3006','2012B-3007','2012B-3011','2012B-3012','2012B-3013','2012B-3014','2012B-3015','2012B-3016','2012B-9993','2012B-9999','2013A-0351','2013A-0360','2013A-0411','2013A-0704','2013A-0719','2013A-0741','2013A-9999','2013B-0440','2013B-0614','2014A-0634','2014A-0640','2014B-0404','2015A-0322','2015B-0187','2015B-0250','2015B-0305','2015B-0307','2015B-0607','2016A-0366']
+    else:
+        sql = 'select propid from ops_propid where start_time <= %s and end_time >= %s' % (dbh.get_named_bind_string('begdate'), dbh.get_named_bind_string('enddate'))
+        curs = dbh.cursor()
+        for nite in nitelist:
+            nitedate = datetime.strptime(nite, "%Y%m%d")
+            begdate = nitedate.replace(hour=12)
+            enddate = begdate + timedelta(days=1) 
+            curs.execute(sql, {'begdate': begdate, 'enddate': enddate})
+            results[nite] = []
+            for row in curs:
+                results[nite].append(row[0])
+    return results
+
+
+#def get_manifest_exposures(dbh, nitelist):
+#    """ Returns a list of expnums per nite that appears in manifest files already ingested """
+#    
+#    sql = "select * from manifest_exposure where nite=%s" % dbh.get_named_bind_string('nite')
+#    
+#    curs = dbh.cursor()
+#
+#    results = {}
+#    for nite in nitelist:
+#        results[nite] = {}
+#        curs.execute(sql, {'nite': nite})
+#        desc = [d[0].lower() for d in curs.description]
+#        for row in curs:
+#            d = dict(zip(desc, row))
+#            results[nite][d['expnum']] = d
+#    return results
+
+######################################################################
+def get_desdm_manifests(dbh, nitelist):
+    sql = 'select * from manifest_exposure where nite=%s' % dbh.get_named_bind_string('nite')
+    curs = dbh.cursor()
+
+    manifests = {}
+    manexposures = {}
+    for nite in nitelist:
+        manifests[nite] = {}
+        curs.execute(sql, {'nite': nite})
+        desc = [d[0].lower() for d in curs.description]
+        for row in curs:
+            rowd = dict(zip(desc, row))
+            manexposures[rowd['expnum']] = rowd
+
+            if rowd['field'] not in manifests[nite]:
+                manifests[nite][rowd['field']] = {}
+            if rowd['band'] not in manifests[nite][rowd['field']]:
+                manifests[nite][rowd['field']][rowd['band']] = set()
+            manifests[nite][rowd['field']][rowd['band']].add(rowd['manifest_filename'])
+
+    return manexposures, manifests
+
+######################################################################
+def mark_sne_skip(sispi_info):
+    # first group by seqid
+    byseqid = {}
+    stot = {}
+    for nite, ndict in sispi_info.items():
+        for expnum, edict in ndict.items():
+            if edict['seqid'] not in byseqid:
+                byseqid[edict['seqid']] = {}
+            byseqid[edict['seqid']][edict['expnum']] = edict
+            stot[edict['seqid']] = edict['seqtot']    # assumes all seqtot are correct
+
+    # process each seqid/manifest
+    for seqid, sdict in byseqid.items():
+        byseqnum = [None] * (stot[seqid] + 1)
+        for expnum, edict in sorted(sdict.items()):
+            edict['skip'] = False
+            if byseqnum[edict['seqnum']] is None:
+                byseqnum[edict['seqnum']] = edict
+            else:
+                byseqnum[edict['seqnum']]['skip'] = True
+                byseqnum[edict['seqnum']] = edict
+
+def get_missing_manifest(nitelist, sispi_sne, manifest_exposures):
+    """ determine if missing a manifest files for each nite """
+
+    results = {}
+    for nite in nitelist:
+        #sispi_expnums = set(sispi_sne[nite].keys())
+        #manifest_expnums = set(manifest_exposures[nite].keys())
+        #results[nite] = len(sispi_expnums - manifest_expnums)
+        results[nite] = []
+    return results
 
 
 def gather_lasts():
@@ -466,68 +965,152 @@ def gather_lasts():
     return extra_info
 
 
+def summarize_expnums(explist, expinfo):
+
+    # subgroup by propid, obstype
+    
+    expgroups = {}
+    for expnum in explist:
+        edict = expinfo[expnum]
+        if edict['propid'] not in expgroups:
+            expgroups[edict['propid']] = {}
+        if edict['obstype'] not in expgroups[edict['propid']]:
+            expgroups[edict['propid']][edict['obstype']] = []
+        expgroups[edict['propid']][edict['obstype']].append(expnum)
+
+    return expgroups
+
+    
+
+
+def summarize_info(nitelist, info):
+
+    summary_misc = gather_lasts()
+    summary_nite = {}
+
+    if len(info['failures']) > 0:
+        lasterr = sorted(info['failures'].values(), key=lambda x:x['rejected_date'])[-1]
+        summary_misc['last_processed_err'] = "%s - %s - %s" % (lasterr['rejected_date'].strftime("%Y/%m/%d %H:%M:%S"), 
+                                                               lasterr['orig_filename'], lasterr['rejected_msg'])
+    else:
+        summary_misc['last_processed_err'] = ""
+
+    fail_by_nite = get_desdm_fail_by_nite(info['failures'], info['sispi_delivered'])
+
+    #print sorted(desdm_info.keys())
+    #print sorted(sispi_info.keys())
+    
+    summary_misc['extra'] = set()
+    for nite in nitelist:
+        summary_nite[nite] = {}
+
+        if nite in info['nite_summary_urls']:
+            summary_nite[nite]['nite_sum'] = info['nite_summary_urls'][nite]
+        else:
+            summary_nite[nite]['nite_sum'] = None
+
+        if nite in info['sispi_delivered']:
+            summary_nite[nite]['cnt_sispi'] = len(info['sispi_delivered'][nite])
+        else:
+            summary_nite[nite]['cnt_sispi'] = 0
+
+        if nite in info['desdm']:
+            summary_nite[nite]['cnt_desdm'] = len(info['desdm'][nite])
+        else:
+            summary_nite[nite]['cnt_desdm'] = 0
+
+        # don't count as extra if we should have gotten it, but sispi.exposure.delivered was False
+        extra_expnums = set(info['desdm'][nite].keys()) - set(info['sispi_delivered'][nite].keys()) - set(info['sispi_not_delivered'][nite].keys())
+        summary_nite[nite]['cnt_extra'] = len(extra_expnums)
+        summary_nite[nite]['summary_extra'] = summarize_expnums(extra_expnums, info['desdm'][nite])
+        summary_misc['extra'].union(extra_expnums)
+
+        missing_expnums = set(info['sispi_delivered'][nite].keys()) - set(info['desdm'][nite].keys()) - set(fail_by_nite[nite].keys())
+        summary_nite[nite]['cnt_missing'] = len(missing_expnums)
+        summary_nite[nite]['summary_missing'] = summarize_expnums(missing_expnums, info['sispi_delivered'][nite])
+
+        summary_nite[nite]['cnt_fail'] = len(fail_by_nite[nite])
+        summary_nite[nite]['summary_fail'] = summarize_expnums(fail_by_nite[nite].keys(), info['sispi_delivered'][nite])
+
+        if nite in info['missing_manifest']:
+            summary_nite[nite]['cnt_missing_manifest'] = len(info['missing_manifest'][nite])
+        else:
+            summary_nite[nite]['cnt_missing_manifest'] = 0
+
+    return summary_nite, summary_misc
+
+
+
+
 def gather_info(args, nitelist):
     """ Workflow for gathering all the information """
 
     all_nitely_info = {}
+    info = {}
 
-    extra_info = gather_lasts()
 
     begnite = nitelist[-1]
     begdate = datetime.strptime(begnite, "%Y%m%d")
 
-    nite_summary_urls = get_nightly_summary_index()
+    info['nite_summary_urls'] = get_nightly_summary_index()
 
-    sispi_expnums = get_sispi_info(args['des_services'], args['sispi_db_section'], nitelist)
+    try:
+        # open DESDM connection here as needed multiple places
+        dbh = desdbi.DesDbi(args['des_services'], args['des_db_section'], True)
+        propids = get_propids(dbh, nitelist)
+        info['desdm'] = get_desdm_info(dbh, nitelist)
+        (info['failures'], info['duplicates']) = get_desdm_fail_info(dbh, begdate)
+        (info['manifest_exposures'], info['manifests']) = get_desdm_manifests(dbh, nitelist)
+        dbh.close()
+    except:
+        raise 
+        desdm_db_failure = True
+        propids = get_propids(None, nitelist)
+        info['desdm'] = search_disk_for_exposures(nitelist)
+        info['failures'] = search_disk_for_failures(nitelist)   # does this handle duplicates separate from failures?
+    
 
-    # open DESDM connection here as needed multiple places
-    dbh = desdbi.DesDbi(args['des_services'], args['des_db_section'])
+    try:
+        dbh = desdbi.DesDbi(args['des_services'], args['sispi_db_section'], True)
+        info['sispi_delivered'], info['sispi_not_delivered'], info['sispi_sne'] = get_sispi_info(dbh, nitelist, propids)
+        info['missing_manifest'] = get_missing_manifest(nitelist, info['sispi_sne'], info['manifest_exposures'])
+    except:
+        sispi_db_failure = True
+        raise
 
-    desdm_expnums = get_desdm_info(dbh, nitelist)
-    extra_info['failures'] = get_desdm_fail_info(dbh, begdate)
-    if len(extra_info['failures']) > 0:
-        lasterr = extra_info['failures'][-1]
-        extra_info['last_processed_err'] = "%s - %s - %s" % (lasterr['rejected_date'].strftime("%Y/%m/%d %H:%M:%S"), lasterr['orig_filename'], lasterr['rejected_msg'])
-    else:
-        extra_info['last_processed_err'] = ""
-    dbh.close()
+    return info
 
-    fail_cnt_by_nite = get_desdm_fail_cnt_by_nite(extra_info['failures'], sispi_expnums)
 
+def search_disk_for_exposures(nitelist):
+    """ Get exposure filenames from disk """
+
+    results = {}
     for nite in nitelist:
-        all_nitely_info[nite] = {}
-
-        if nite in nite_summary_urls:
-            all_nitely_info[nite]['nite_sum'] = nite_summary_urls[nite]
-        else:
-            all_nitely_info[nite]['nite_sum'] = None
-
-        if nite in sispi_expnums:
-            all_nitely_info[nite]['cnt_sispi'] = len(sispi_expnums[nite])
-        else:
-            all_nitely_info[nite]['cnt_sispi'] = 0
-        if nite in desdm_expnums:
-            all_nitely_info[nite]['cnt_desdm'] = len(desdm_expnums[nite])
-        else:
-            all_nitely_info[nite]['cnt_desdm'] = 0
-
-        extra_expnums = desdm_expnums[nite] - sispi_expnums[nite]
-        all_nitely_info[nite]['cnt_extra'] = len(extra_expnums)
-
-        missing_expnums = sispi_expnums[nite] - desdm_expnums[nite]
-        all_nitely_info[nite]['cnt_missing'] = len(missing_expnums)
-
-        if nite in fail_cnt_by_nite:
-            all_nitely_info[nite]['cnt_fail'] = fail_cnt_by_nite[nite]
-        else:
-            all_nitely_info[nite]['cnt_fail'] = 0
-
-    return all_nitely_info, extra_info
+        results[nite] = {}
+        nitepath = "%s/%s" % (dts_archive_path, nite)
+        for (dirpath, dirnames, filenames) in os.walk(nitepath):
+            for fname in filenames:
+                m = re.match('DECam_(\d+).fits.fz', fname)
+                if m:
+                    expnum = int(m.group(1))
+                    results[nite][expnum] = {'expnum': expnum, 'filename': os.basename(fname), 'fullname': fname}
+    return results
 
 
-def create_full_html_filename():
+def search_disk_for_failures(nitelist):
+    # todo limit directory walking to time of nitelist
+    results = {}
+    for (dirpath, dirnames, filenames) in os.walk(FAIL_DIR):
+        for fname in filenames:
+            #print fname
+            pass
+    return results
+
+
+
+
+def create_full_html_filename(htmlfilename):
     """ create the full filename for the output html file """
-    htmlfilename = 'dtsmonitor.html'
 
     if 'DTSMONITOR_OUTBASE' in os.environ:
         output_base = os.environ['DTSMONITOR_OUTBASE']
@@ -561,17 +1144,22 @@ def main():
     else:
         enddate = datetime.strptime(endnite, "%Y%m%d")
 
-    datelist = [enddate - timedelta(days=x) for x in range(0, NUM_NITES)]
+    datelist = [enddate - timedelta(days=x) for x in range(0, args['num_nites'])]
     if verbose:
         print datelist
     nitelist = [datetime.strftime(x, "%Y%m%d") for x in datelist]
 
-    (nite_info, extra_info) = gather_info(args, nitelist)
-    htmlfile = create_full_html_filename()
-    if verbose:
-        print "Writing html to %s" % (htmlfile)
-    print_summary_html(starttime, nite_info, extra_info, nitelist, htmlfile, args['cron'])
+    info = gather_info(args, nitelist)
+    summary_nite, summary_misc = summarize_info(nitelist, info)
 
+    print_summary_html(starttime, nitelist, summary_nite, summary_misc, info, args['cron'])
+    print_exposure_html(starttime, nitelist, info, 'short', args['cron'])
+    print_exposure_html(starttime, nitelist, info, 'normal', args['cron'])
+    print_exposure_html(starttime, nitelist, info, 'full', args['cron'])
+
+    mark_sne_skip(info['sispi_sne'])
+    info['sne'] = combine_sne_info(nitelist, info) 
+    print_sne_html(starttime, nitelist, info, args['cron'])
 
 if __name__ == "__main__":
     main()
