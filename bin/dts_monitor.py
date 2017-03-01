@@ -345,6 +345,10 @@ def print_exposure_html(timestamp, nitelist, info, reptype, cron=0):
                 filename = 'DECam_%08d.fits.fz' % expnum
                 if filename in info['failures']:
                     expstate = 'fail'
+                    if expnum in info['sispi_delivered'][nite]:
+                        expinfo = info['sispi_delivered'][nite][expnum]
+                    else:
+                        expinfo = {}
                 elif expnum not in info['desdm'][nite]:
                     if expnum in info['sispi_delivered'][nite]:
                         expinfo = info['sispi_delivered'][nite][expnum]
@@ -384,7 +388,7 @@ def print_exposure_html(timestamp, nitelist, info, reptype, cron=0):
                     htmlfh.write("<td>%s</td>" % expnum)
                     htmlfh.write("<td>%s</td>" % expinfo['obstype'])
 
-                    if expinfo['band'] is None:
+                    if 'band' not in expinfo or expinfo['band'] is None:
                         if expinfo['obstype'] in ['zero', 'calibration'] or expinfo['object'] in ['pointing', 'focus', 'donut']:
                             htmlfh.write("<td>&nbsp;</td>")
                         else:
@@ -865,7 +869,7 @@ def get_propids(dbh, nitelist):
         for nite in nitelist:
             results[nite] = ['2012B-0001','2012B-0003','2012B-0005','2012B-0416','2012B-0448','2012B-3001','2012B-3002','2012B-3003','2012B-3004','2012B-3005','2012B-3006','2012B-3007','2012B-3011','2012B-3012','2012B-3013','2012B-3014','2012B-3015','2012B-3016','2012B-9993','2012B-9999','2013A-0351','2013A-0360','2013A-0411','2013A-0704','2013A-0719','2013A-0741','2013A-9999','2013B-0440','2013B-0614','2014A-0634','2014A-0640','2014B-0404','2015A-0322','2015B-0187','2015B-0250','2015B-0305','2015B-0307','2015B-0607','2016A-0366']
     else:
-        sql = 'select propid from ops_propid where start_time <= %s and end_time >= %s' % (dbh.get_named_bind_string('begdate'), dbh.get_named_bind_string('enddate'))
+        sql = 'select propid from dts_propid where start_time <= %s and end_time >= %s' % (dbh.get_named_bind_string('begdate'), dbh.get_named_bind_string('enddate'))
         curs = dbh.cursor()
         for nite in nitelist:
             nitedate = datetime.strptime(nite, "%Y%m%d")
