@@ -9,12 +9,11 @@ import time
 import sys
 import re
 import argparse
-import shutil # move file
+import shutil  # move file
 import traceback
 from datetime import datetime
 
 import despymisc.miscutils as miscutils
-import filemgmt.fmutils as fmutils
 import filemgmt.disk_utils_local as diskutils
 import intgutils.replace_funcs as replfuncs
 
@@ -31,6 +30,7 @@ def read_config(cfgfile):
                 config[lmatch.group(1).strip()] = lmatch.group(2).strip()
 
     return config
+
 
 ######################################################################
 def determine_filetype(filename):
@@ -55,12 +55,14 @@ def read_notify_file(notify_file):
             notifydict[mline.group(1).strip().lower()] = mline.group(2).strip()
     return notifydict
 
+
 ################################################################
 def stop_if_already_running():
     """ Exits program if program is already running """
 
     script_name = os.path.basename(__file__)
-    statout = subprocess.getstatusoutput("ps aux | grep -e '%s' | grep -v grep | grep -v vim | awk '{print $2}'| awk '{print $2}' " % script_name)
+    statout = subprocess.getstatusoutput(("ps aux | grep -e '%s' | grep -v grep | grep -v vim |"
+                                          "awk '{print $2}'| awk '{print $2}' ") % script_name)
     if statout[1]:
         print("Already running.  Aborting")
         print(statout[1])
@@ -86,19 +88,19 @@ def move_file_to_archive(config, delivery_fullname, archive_rel_path, dts_md5sum
     while cp_cnt <= max_cp_tries and not copied:
         miscutils.coremakedirs(path)
 
-        shutil.copy2(delivery_fullname, dst) # similar to cp -p
+        shutil.copy2(delivery_fullname, dst)  # similar to cp -p
         starttime = datetime.now()
         fileinfo = diskutils.get_single_file_disk_info(dst, True, root)
         endtime = datetime.now()
 
-        miscutils.fwdebug_print("%s: md5sum after move %s (%0.2f secs)" % \
+        miscutils.fwdebug_print("%s: md5sum after move %s (%0.2f secs)" %
                                 (delivery_fullname, fileinfo['md5sum'],
                                  (endtime - starttime).total_seconds()))
 
         if dts_md5sum is None:
             copied = True
         elif dts_md5sum != fileinfo['md5sum']:
-            miscutils.fwdebug_print("Warning: md5 doesn't match after cp (%s, %s)" % \
+            miscutils.fwdebug_print("Warning: md5 doesn't match after cp (%s, %s)" %
                                     (delivery_fullname, dst))
             time.sleep(5)
             os.unlink(dst)   # remove bad file from archive
@@ -112,6 +114,7 @@ def move_file_to_archive(config, delivery_fullname, archive_rel_path, dts_md5sum
     os.unlink(delivery_fullname)
 
     return dst
+
 
 ################################################################
 def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
@@ -132,7 +135,7 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
 
     miscutils.fwdebug_print("%s: dts md5sum = %s" % (delivery_fullname, dts_md5sum))
 
-    #print config.keys()
+    # print config.keys()
     try:
         filename = miscutils.parse_fullname(delivery_fullname, miscutils.CU_PARSE_FILENAME)
         miscutils.fwdebug_print("filename = %s" % filename)
@@ -154,9 +157,10 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
                             ftype, None, None, "Duplicate file")
         elif filemgmt.check_valid(ftype, delivery_fullname):
             starttime = datetime.now()
-            results = filemgmt.register_file_data(ftype, [delivery_fullname], None, task_id, False, None, None)
+            results = filemgmt.register_file_data(ftype, [delivery_fullname], None, task_id,
+                                                  False, None, None)
             endtime = datetime.now()
-            miscutils.fwdebug_print("%s: gathering and registering file data (%0.2f secs)" % \
+            miscutils.fwdebug_print("%s: gathering and registering file data (%0.2f secs)" %
                                     (delivery_fullname, (endtime - starttime).total_seconds()))
             disk_info = results[delivery_fullname]['diskinfo']
             metadata = results[delivery_fullname]['metadata']
@@ -172,13 +176,13 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
                                                                      md5sum_before_move))
                     raise IOError("md5sum in delivery dir not the same as DTS-provided md5sum")
 
-            # get path 
+            # get path
             patkey = 'dirpat_' + ftype
             miscutils.fwdebug_print('patkey = %s' % patkey)
             dirpat = config['directory_pattern'][config[patkey]]['ops']
             miscutils.fwdebug_print('dirpat = %s' % dirpat)
             archive_rel_path = replfuncs.replace_vars_single(dirpat, metadata)
-                
+
             if miscutils.fwdebug_check(3, "DTSFILEHANDLER_DEBUG"):
                 miscutils.fwdebug_print('archive_rel_path = %s' % archive_rel_path)
 
@@ -211,7 +215,6 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
                         "SystemExit: Probably missing header value.  Check log for error msg.")
 
     filemgmt.commit()
-
 
 
 ################################################################
@@ -285,11 +288,9 @@ def handle_bad_file(config, notify_file, delivery_fullname, archive_fullname,
     if ftype is not None:
         row['filetype'] = ftype
 
-
     dbh.basic_insert_row('DTS_BAD_FILE', row)
     dbh.commit()
     os.unlink(notify_file)
-
 
 
 ###########################################################################
@@ -298,14 +299,6 @@ def parse_cmdline(argv):
 
     parser = argparse.ArgumentParser(description='Handle files delivered by DTS')
     parser.add_argument('--config', action='store', required=True)
-    #parser.add_argument('fullname', action='store')
-    #parser.add_argument('--classmgmt', action='store')
-    #parser.add_argument('--classutils', action='store')
-    #parser.add_argument('--des_services', action='store')
-    #parser.add_argument('--des_db_section', action='store')
-    #parser.add_argument('--archive', action='store', help='single value')
-    #parser.add_argument('--verbose', action='store', default=1)
-    #parser.add_argument('--version', action='store_true', default=False)
 
     args = vars(parser.parse_args(argv))   # convert to dict
     return args
@@ -321,36 +314,33 @@ def get_list_files(notify_dir, delivery_dir):
 
     # sort by delivery order by using time of notification file
     for filen in sorted(filenames, key=lambda name: os.path.getmtime(os.path.join(notify_dir, name))):
-        #print filen
         nfile = os.path.join(notify_dir, filen)
         dfile = os.path.join(delivery_dir, re.sub('.dts$', '', filen))
         delivery_filenames.append([nfile, dfile])
 
     return delivery_filenames
 
+
 ###########################################################################
 def main(argv):
     """ Program entry point """
 
     args = parse_cmdline(argv)
-    #print args
 
     config = read_config(args['config'])
     config['get_db_config'] = True
 
     filepairs = get_list_files(config['delivery_notice_dir'], config['delivery_dir'])
-    #print filepairs
 
     if len(filepairs) > 0:
         filemgmt = None
 
-        #print config['classmgmt']
         filemgmt_class = miscutils.dynamically_load_class(config['classmgmt'])
-        #valDict = fmutils.get_config_vals({}, config, filemgmt_class.requested_config_vals())
         filemgmt = filemgmt_class(initvals=config)
         config['filetype_metadata'] = filemgmt.get_all_filetype_metadata()
         config['archive'] = filemgmt.get_archive_info()
-        config['directory_pattern'] = filemgmt.query_results_dict('select * from OPS_DIRECTORY_PATTERN', 'name')
+        config['directory_pattern'] = filemgmt.query_results_dict('select * from OPS_DIRECTORY_PATTERN',
+                                                                  'name')
 
         task_id = config['dts_task_id']  # get task id for dts
 
@@ -364,10 +354,5 @@ def main(argv):
 ###########################################################################
 if __name__ == '__main__':
     sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)  # turn off buffering of stdout
-
     stop_if_already_running()
-
-    #print "sleeping"
-    #time.sleep(3000)
-
     main(sys.argv[1:])

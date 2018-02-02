@@ -6,6 +6,7 @@ import argparse
 import sys
 import despydmdb.desdmdbi as desdmdbi
 
+
 ###########################################################################
 def parse_cmdline(argv):
     """ Parse command line and return dictionary of values """
@@ -18,6 +19,7 @@ def parse_cmdline(argv):
     args = vars(parser.parse_args(argv))   # convert to dict
     return args
 
+
 ###########################################################################
 def main(argv):
     """ Program entry point """
@@ -29,12 +31,13 @@ def main(argv):
     task_id = dbh.create_task(name='dts', info_table=None, parent_task_id=None,
                               root_task_id=None, i_am_root=True, label=args['label'],
                               do_begin=True, do_commit=True)
-    row = {'task_id': task_id, 'prov_msg': 'dts file receiver %s'% args['label']}
+    row = {'task_id': task_id, 'prov_msg': 'dts file receiver %s' % args['label']}
     dbh.basic_insert_row('FILE_REGISTRATION', row)
     dbh.commit()
     dbh.close()
 
     print("Update the DTS config file:   dts_task_id = %d" % task_id)
+
 
 if __name__ == "__main__":
     main(sys.argv[1:])
