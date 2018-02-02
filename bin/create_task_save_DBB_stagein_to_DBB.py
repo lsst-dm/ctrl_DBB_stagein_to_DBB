@@ -25,7 +25,7 @@ def main(argv):
     args = parse_cmdline(argv)
     dbh = desdmdbi.DesDmDbi(args['des_services'], args['des_db_section'])
 
-    print "Creating task with name='dts' and label='%s'" % args['label']
+    print("Creating task with name='dts' and label='%s'" % args['label'])
     task_id = dbh.create_task(name='dts', info_table=None, parent_task_id=None,
                               root_task_id=None, i_am_root=True, label=args['label'],
                               do_begin=True, do_commit=True)
@@ -34,7 +34,7 @@ def main(argv):
     dbh.commit()
     dbh.close()
 
-    print "Update the DTS config file:   dts_task_id = %d" % task_id
+    print("Update the DTS config file:   dts_task_id = %d" % task_id)
 
 if __name__ == "__main__":
     main(sys.argv[1:])

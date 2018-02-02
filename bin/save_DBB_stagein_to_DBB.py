@@ -3,7 +3,7 @@
 """ For each file that was accepted by accept_dts_delivery,
     copy file to archive and register file in DB """
 
-import commands
+import subprocess
 import os
 import time
 import sys
@@ -60,10 +60,10 @@ def stop_if_already_running():
     """ Exits program if program is already running """
 
     script_name = os.path.basename(__file__)
-    statout = commands.getstatusoutput("ps aux | grep -e '%s' | grep -v grep | grep -v vim | awk '{print $2}'| awk '{print $2}' " % script_name)
+    statout = subprocess.getstatusoutput("ps aux | grep -e '%s' | grep -v grep | grep -v vim | awk '{print $2}'| awk '{print $2}' " % script_name)
     if statout[1]:
-        print "Already running.  Aborting"
-        print statout[1]
+        print("Already running.  Aborting")
+        print(statout[1])
         sys.exit(0)
 
 
@@ -198,10 +198,10 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
 
     except Exception as err:
         (extype, exvalue, trback) = sys.exc_info()
-        print "******************************"
-        print "Error: %s" % delivery_fullname
+        print("******************************")
+        print("Error: %s" % delivery_fullname)
         traceback.print_exception(extype, exvalue, trback, file=sys.stdout)
-        print "******************************"
+        print("******************************")
 
         handle_bad_file(config, notify_file, delivery_fullname, new_fullname, filemgmt,
                         ftype, metadata, disk_info, "Exception: %s" % err)
