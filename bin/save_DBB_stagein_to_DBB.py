@@ -16,8 +16,33 @@ from datetime import datetime
 import despymisc.miscutils as miscutils
 import filemgmt.fmutils as fmutils
 import filemgmt.disk_utils_local as diskutils
-import dtsfilereceiver.dts_utils as dtsutils
 import intgutils.replace_funcs as replfuncs
+
+
+######################################################################
+def read_config(cfgfile):
+    """ Read the configuration file into a dictionary """
+    config = {}
+    with open(cfgfile, "r") as cfgfh:
+        for line in cfgfh:
+            line = line.strip()
+            if len(line) > 0 and not line.startswith('#'):
+                lmatch = re.match(r"([^=]+)\s*=\s*(.*)$", line)
+                config[lmatch.group(1).strip()] = lmatch.group(2).strip()
+
+    return config
+
+######################################################################
+def determine_filetype(filename):
+    """ Returns the filetype of the given file or None if cannot determine filetype """
+    filetype = None
+
+    if filename.endswith('.fits'):
+        filetype = 'raw'
+    elif filename.startswith('manifest_SN') and filename.endswith('.json'):
+        filetype = 'snmanifest'
+
+    return filetype
 
 
 ################################################################
@@ -120,7 +145,7 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
             os.unlink(notify_file)
             return
 
-        ftype = dtsutils.determine_filetype(filename)
+        ftype = determine_filetype(filename)
         if miscutils.fwdebug_check(3, "DTSFILEHANDLER_DEBUG"):
             miscutils.fwdebug_print("filetype = %s" % ftype)
 
@@ -310,7 +335,7 @@ def main(argv):
     args = parse_cmdline(argv)
     #print args
 
-    config = dtsutils.read_config(args['config'])
+    config = read_config(args['config'])
     config['get_db_config'] = True
 
     filepairs = get_list_files(config['delivery_notice_dir'], config['delivery_dir'])
