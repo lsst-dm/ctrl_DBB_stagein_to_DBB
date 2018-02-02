@@ -13,7 +13,7 @@ import re
 import pytz
 import getpass
 import socket
-import urllib2
+import urllib.request, urllib.error, urllib.parse
 import subprocess
 from dateutil.parser import parse
 
@@ -209,7 +209,7 @@ def get_timestamp_last_processed():
         last_line = ""
         cmd = 'grep -h handle_file %s' % files    # no filename
         if verbose:
-            print cmd
+            print(cmd)
         process = subprocess.Popen(cmd.split(), shell=False,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         out = process.communicate()[0]
@@ -219,13 +219,13 @@ def get_timestamp_last_processed():
         if len(outlines) >= 1:
             last_line = outlines[-1]
     if verbose:
-        print "last_line:", last_line
+        print("last_line:", last_line)
 
     last_processed = "N/A"
     if last_line is not None:
         last_processed = parse_timestamp(last_line)
     if verbose:
-        print "last_processed:", last_processed
+        print("last_processed:", last_processed)
 
     return last_processed
 
@@ -238,7 +238,7 @@ def get_last_transfer_summary():
     if os.path.exists(dtslog):
         cmd = 'grep XSUM %s' % dtslog
         if verbose:
-            print cmd
+            print(cmd)
         process = subprocess.Popen(cmd.split(), shell=False,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         out = process.communicate()[0]
@@ -250,7 +250,7 @@ def get_last_transfer_summary():
         elif len(outlines) == 1:
             last_line = outlines[-1]
     if verbose:
-        print "last_line:", last_line
+        print("last_line:", last_line)
 
     msg_str = ''
     if last_line is not None:
@@ -271,7 +271,7 @@ def get_last_dts_err():
     if os.path.exists(dtslog):
         cmd = 'grep ERR %s' % dtslog
         if verbose:
-            print cmd
+            print(cmd)
         process = subprocess.Popen(cmd.split(), shell=False,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         out = process.communicate()[0]
@@ -284,7 +284,7 @@ def get_last_dts_err():
             last_line = outlines[-1]
 
     if verbose:
-        print "last_line:", last_line
+        print("last_line:", last_line)
 
     msg_str = ''
     if last_line is not None:
@@ -301,9 +301,9 @@ def get_nightly_summary_index():
     """ get the nite summary urls from the nite summary index page """
     nite_summary_urls = {}
     try:
-        index_file = urllib2.urlopen(NITESUM_BASE+"index.html").read()
+        index_file = urllib.request.urlopen(NITESUM_BASE+"index.html").read()
         if verbose:
-            print 'index_file=', index_file
+            print('index_file=', index_file)
         for line in index_file.split('\n'):
             lmatch = re.search(r"nightsum-(\d\d\d\d)-(\d\d)-(\d\d)/nightsum.html", line)
             if lmatch:
@@ -524,7 +524,7 @@ def print_summary_html(timestamp, nitelist, nite_info, extra_info, info, cron=0)
 
     htmlfile = create_full_html_filename('dtsmonitor.html')
     if verbose:
-        print "Writing html to %s" % (htmlfile)
+        print("Writing html to %s" % (htmlfile))
     with open(htmlfile, "w") as htmlfh:
         htmlfh.write("<html>\n")
         htmlfh.write("<body>\n")
@@ -617,20 +617,20 @@ def print_summary_html(timestamp, nitelist, nite_info, extra_info, info, cron=0)
             htmllines = []
             if nite_info[nite]['cnt_missing'] != 0:
                 smdict = nite_info[nite]['summary_missing']
-                for propid in smdict.keys():
-                    for obstype in smdict[propid].keys():
+                for propid in list(smdict.keys()):
+                    for obstype in list(smdict[propid].keys()):
                         htmllines.append('%s: %s: %s' % (propid, obstype, ', '.join([str(x) for x in smdict[propid][obstype]])))
 
             if nite_info[nite]['cnt_fail'] != 0:
                 smdict = nite_info[nite]['summary_fail']
-                for propid in smdict.keys():
-                    for obstype in smdict[propid].keys():
+                for propid in list(smdict.keys()):
+                    for obstype in list(smdict[propid].keys()):
                         htmllines.append("<font color='red'>%s: %s: %s</font>" % (propid, obstype, ', '.join([str(x) for x in smdict[propid][obstype]])))
 
             if nite_info[nite]['cnt_extra'] != 0:
                 smdict = nite_info[nite]['summary_extra']
-                for propid in smdict.keys():
-                    for obstype in smdict[propid].keys():
+                for propid in list(smdict.keys()):
+                    for obstype in list(smdict[propid].keys()):
                         htmllines.append("<font color='cyan'>%s: %s: %s</font>" % (propid, obstype, ', '.join([str(x) for x in smdict[propid][obstype]])))
 
 
@@ -657,7 +657,7 @@ def print_summary_html(timestamp, nitelist, nite_info, extra_info, info, cron=0)
 
         htmlfh.write("<table border=1 cellpad=3>\n")
         htmlfh.write("<tr><th>rejected_date</th><th>orig_filename</th><th>rejected_msg</th></tr>\n")
-        sortfail = sorted(info['failures'].values(), key=lambda item: item['rejected_date'],
+        sortfail = sorted(list(info['failures'].values()), key=lambda item: item['rejected_date'],
                           reverse=True)
         for fcnt in range(0, min(20, len(sortfail))):
             htmlfh.write("<tr>\n")
@@ -745,10 +745,10 @@ def get_sispi_info(dbh, nitelist, propids):
         sispi_sne[nite] = {}
         sispi_not_delivered[nite] = {}
         for row in curs:
-            d = dict(zip(desc, row))
+            d = dict(list(zip(desc, row)))
             d['nite'] = convert_sispi_date_to_nite(d['date'])
             if d['nite'] != nite:
-                print "Warn: sispi nite mismatch", expnum
+                print("Warn: sispi nite mismatch", expnum)
             d['band'] = None
             if d['filter'] is not None and d['filter'] != '': 
                 try:
@@ -798,7 +798,7 @@ def get_desdm_info(dbh, nitelist):
         desc = [d[0].lower() for d in curs.description]
 
         for row in curs:
-            d = dict(zip(desc, row))
+            d = dict(list(zip(desc, row)))
             desdm_info[nite][d['expnum']]=d
     return desdm_info
 
@@ -808,7 +808,7 @@ def get_desdm_fail_by_nite(failures, sispi_info):
     # first make a dictionary by expnum
     # repeated failures don't count
     by_expnum = {}
-    for faild in failures.values():
+    for faild in list(failures.values()):
         if 'expnum' in faild:
             if faild['expnum'] not in by_expnum:
                 by_expnum[faild['expnum']] = {}
@@ -823,7 +823,7 @@ def get_desdm_fail_by_nite(failures, sispi_info):
             if expnum in by_expnum:
                 by_nite[nite][expnum] = by_expnum[expnum]
             elif int(expnum)==519365:
-                print "why %s, %s not in by_expnum for nite %s" % (expnum, type(expnum), nite), by_expnum.keys()
+                print("why %s, %s not in by_expnum for nite %s" % (expnum, type(expnum), nite), list(by_expnum.keys()))
 
     return by_nite
 
@@ -839,7 +839,7 @@ def get_desdm_fail_info(dbh, begdate):
     des_fail = {}
     duplicates = {}
     for row in curs:
-        rowd = dict(zip(desc, row))
+        rowd = dict(list(zip(desc, row)))
         rejnite = rowd['rejected_date'].strftime('%Y%m%d') 
         fmatch = re.match(r'DECam_(\d+).fits.fz', rowd['orig_filename'])
         if fmatch:   # note manifest files won't match
@@ -907,7 +907,7 @@ def get_desdm_manifests(dbh, nitelist):
         curs.execute(sql, {'nite': nite})
         desc = [d[0].lower() for d in curs.description]
         for row in curs:
-            rowd = dict(zip(desc, row))
+            rowd = dict(list(zip(desc, row)))
             manexposures[rowd['expnum']] = rowd
 
             if rowd['field'] not in manifests[nite]:
@@ -923,15 +923,15 @@ def mark_sne_skip(sispi_info):
     # first group by seqid
     byseqid = {}
     stot = {}
-    for nite, ndict in sispi_info.items():
-        for expnum, edict in ndict.items():
+    for nite, ndict in list(sispi_info.items()):
+        for expnum, edict in list(ndict.items()):
             if edict['seqid'] not in byseqid:
                 byseqid[edict['seqid']] = {}
             byseqid[edict['seqid']][edict['expnum']] = edict
             stot[edict['seqid']] = edict['seqtot']    # assumes all seqtot are correct
 
     # process each seqid/manifest
-    for seqid, sdict in byseqid.items():
+    for seqid, sdict in list(byseqid.items()):
         byseqnum = [None] * (stot[seqid] + 1)
         for expnum, edict in sorted(sdict.items()):
             edict['skip'] = False
@@ -989,7 +989,7 @@ def summarize_info(nitelist, info):
     summary_nite = {}
 
     if len(info['failures']) > 0:
-        lasterr = sorted(info['failures'].values(), key=lambda x:x['rejected_date'])[-1]
+        lasterr = sorted(list(info['failures'].values()), key=lambda x:x['rejected_date'])[-1]
         summary_misc['last_processed_err'] = "%s - %s - %s" % (lasterr['rejected_date'].strftime("%Y/%m/%d %H:%M:%S"), 
                                                                lasterr['orig_filename'], lasterr['rejected_msg'])
     else:
@@ -1030,7 +1030,7 @@ def summarize_info(nitelist, info):
         summary_nite[nite]['summary_missing'] = summarize_expnums(missing_expnums, info['sispi_delivered'][nite])
 
         summary_nite[nite]['cnt_fail'] = len(fail_by_nite[nite])
-        summary_nite[nite]['summary_fail'] = summarize_expnums(fail_by_nite[nite].keys(), info['sispi_delivered'][nite])
+        summary_nite[nite]['summary_fail'] = summarize_expnums(list(fail_by_nite[nite].keys()), info['sispi_delivered'][nite])
 
         if nite in info['missing_manifest']:
             summary_nite[nite]['cnt_missing_manifest'] = len(info['missing_manifest'][nite])
@@ -1123,7 +1123,7 @@ def create_full_html_filename(htmlfilename):
             output_base = "/home/%s/public_html" % (user)
         monitor_html = "%s/%s" % (output_base, htmlfilename)
     else:
-        print "Warning:  writing to current directory"
+        print("Warning:  writing to current directory")
         monitor_html = "%s" % (htmlfilename)
 
     return monitor_html
@@ -1146,7 +1146,7 @@ def main():
 
     datelist = [enddate - timedelta(days=x) for x in range(0, args['num_nites'])]
     if verbose:
-        print datelist
+        print(datelist)
     nitelist = [datetime.strftime(x, "%Y%m%d") for x in datelist]
 
     info = gather_info(args, nitelist)
