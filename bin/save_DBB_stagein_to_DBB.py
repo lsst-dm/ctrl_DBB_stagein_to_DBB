@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
-""" For each file that was accepted by accept_dts_delivery,
-    copy file to archive and register file in DB """
+""" For each file that was delivered to the stage in area,
+    copy file to Data Backbone location and register file in DB """
 
 import subprocess
 import os
@@ -13,7 +13,7 @@ import shutil  # move file
 import traceback
 from datetime import datetime
 
-import despymisc.miscutils as miscutils
+from despymisc import miscutils
 import filemgmt.disk_utils_local as diskutils
 import intgutils.replace_funcs as replfuncs
 
@@ -70,14 +70,14 @@ def stop_if_already_running():
 
 
 ################################################################
-def move_file_to_archive(config, delivery_fullname, archive_rel_path, dts_md5sum):
+def move_file_to_archive(config, delivery_fullname, archive_rel_path, delivery_md5sum):
     """ Move file to its location in the archive """
 
     basename = os.path.basename(delivery_fullname)
     root = config['archive'][config['archive_name']]['root']
     path = "%s/%s" % (root, archive_rel_path)
     dst = "%s/%s" % (path, basename)
-    if miscutils.fwdebug_check(3, "DTSFILEHANDLER_DEBUG"):
+    if miscutils.fwdebug_check(3, "SAVE_DBB_DEBUG"):
         miscutils.fwdebug_print("%s -> %s" % (delivery_fullname, dst))
 
     # try a couple times to copy file to archive directory
@@ -97,9 +97,9 @@ def move_file_to_archive(config, delivery_fullname, archive_rel_path, dts_md5sum
                                 (delivery_fullname, fileinfo['md5sum'],
                                  (endtime - starttime).total_seconds()))
 
-        if dts_md5sum is None:
+        if delivery_md5sum is None:
             copied = True
-        elif dts_md5sum != fileinfo['md5sum']:
+        elif delivery_md5sum != fileinfo['md5sum']:
             miscutils.fwdebug_print("Warning: md5 doesn't match after cp (%s, %s)" %
                                     (delivery_fullname, dst))
             time.sleep(5)
@@ -128,12 +128,12 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
     # read values from notify file
     notifydict = read_notify_file(notify_file)
 
-    # use dts_md5sum from notify_file
-    dts_md5sum = None
+    # use delivery_md5sum from notify_file
+    delivery_md5sum = None
     if 'md5sum' in notifydict:
-        dts_md5sum = notifydict['md5sum']
+        delivery_md5sum = notifydict['md5sum']
 
-    miscutils.fwdebug_print("%s: dts md5sum = %s" % (delivery_fullname, dts_md5sum))
+    miscutils.fwdebug_print("%s: delivery md5sum = %s" % (delivery_fullname, delivery_md5sum))
 
     # print config.keys()
     try:
@@ -149,7 +149,7 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
             return
 
         ftype = determine_filetype(filename)
-        if miscutils.fwdebug_check(3, "DTSFILEHANDLER_DEBUG"):
+        if miscutils.fwdebug_check(3, "SAVE_DBB_DEBUG"):
             miscutils.fwdebug_print("filetype = %s" % ftype)
 
         if filemgmt.is_file_in_archive([delivery_fullname], config['archive_name']):
@@ -166,15 +166,15 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
             metadata = results[delivery_fullname]['metadata']
             md5sum_before_move = disk_info['md5sum']
 
-            # check that dts given md5sum matches md5sum in delivery directory
-            if dts_md5sum is not None:
+            # check that delivery given md5sum matches md5sum in delivery directory
+            if delivery_md5sum is not None:
                 miscutils.fwdebug_print("%s: md5sum before move %s" % (delivery_fullname,
                                                                        md5sum_before_move))
-                if md5sum_before_move != dts_md5sum:
-                    miscutils.fwdebug_print("%s: dts md5sum = %s" % (delivery_fullname, dts_md5sum))
-                    miscutils.fwdebug_print("%s: py  md5sum = %s" % (delivery_fullname,
+                if md5sum_before_move != delivery_md5sum:
+                    miscutils.fwdebug_print("%s: delivery md5sum = %s" % (delivery_fullname, delivery_md5sum))
+                    miscutils.fwdebug_print("%s: before move md5sum = %s" % (delivery_fullname,
                                                                      md5sum_before_move))
-                    raise IOError("md5sum in delivery dir not the same as DTS-provided md5sum")
+                    raise IOError("md5sum in delivery dir not the same as given md5sum")
 
             # get path
             patkey = 'dirpat_' + ftype
@@ -183,11 +183,11 @@ def handle_file(notify_file, delivery_fullname, config, filemgmt, task_id):
             miscutils.fwdebug_print('dirpat = %s' % dirpat)
             archive_rel_path = replfuncs.replace_vars_single(dirpat, metadata)
 
-            if miscutils.fwdebug_check(3, "DTSFILEHANDLER_DEBUG"):
+            if miscutils.fwdebug_check(3, "SAVE_DBB_DEBUG"):
                 miscutils.fwdebug_print('archive_rel_path = %s' % archive_rel_path)
 
             new_fullname = move_file_to_archive(config, delivery_fullname,
-                                                archive_rel_path, dts_md5sum)
+                                                archive_rel_path, delivery_md5sum)
             miscutils.fwdebug_print("%s: fullname in archive %s" % (delivery_fullname,
                                                                     new_fullname))
             filemgmt.register_file_in_archive(new_fullname, config['archive_name'])
@@ -237,7 +237,7 @@ def handle_bad_file(config, notify_file, delivery_fullname, archive_fullname,
     else:
         miscutils.fwdebug_print("disk_info is not None")
 
-    if miscutils.fwdebug_check(6, "DTSFILEHANDLER_DEBUG"):
+    if miscutils.fwdebug_check(6, "SAVE_DBB_DEBUG"):
         miscutils.fwdebug_print("metadata = %s" % metadata)
         miscutils.fwdebug_print("disk_info = %s" % disk_info)
 
@@ -271,13 +271,13 @@ def handle_bad_file(config, notify_file, delivery_fullname, archive_fullname,
 
     # save extra metadata if it exists
     if metadata is not None:
-        badcols = dbh.get_column_names('DTS_BAD_FILE')
+        badcols = dbh.get_column_names('DBB_BAD_FILE')
 
         for bcol in badcols:
             if bcol in metadata:
                 row[bcol] = metadata[bcol]
 
-    row['task_id'] = config['dts_task_id']
+    row['task_id'] = config['task_id']
     notifyts = os.path.getmtime(notify_file)
     row['delivery_date'] = datetime.fromtimestamp(notifyts)
     row['orig_filename'] = os.path.basename(orig_fullname)
@@ -288,7 +288,7 @@ def handle_bad_file(config, notify_file, delivery_fullname, archive_fullname,
     if ftype is not None:
         row['filetype'] = ftype
 
-    dbh.basic_insert_row('DTS_BAD_FILE', row)
+    dbh.basic_insert_row('DBB_BAD_FILE', row)
     dbh.commit()
     os.unlink(notify_file)
 
@@ -297,7 +297,7 @@ def handle_bad_file(config, notify_file, delivery_fullname, archive_fullname,
 def parse_cmdline(argv):
     """ Parse command line and return dictionary of values """
 
-    parser = argparse.ArgumentParser(description='Handle files delivered by DTS')
+    parser = argparse.ArgumentParser(description='Save files from DBB delivery area into DBB')
     parser.add_argument('--config', action='store', required=True)
 
     args = vars(parser.parse_args(argv))   # convert to dict
@@ -315,7 +315,7 @@ def get_list_files(notify_dir, delivery_dir):
     # sort by delivery order by using time of notification file
     for filen in sorted(filenames, key=lambda name: os.path.getmtime(os.path.join(notify_dir, name))):
         nfile = os.path.join(notify_dir, filen)
-        dfile = os.path.join(delivery_dir, re.sub('.dts$', '', filen))
+        dfile = os.path.join(delivery_dir, re.sub('.dbb$', '', filen))
         delivery_filenames.append([nfile, dfile])
 
     return delivery_filenames
@@ -342,7 +342,7 @@ def main(argv):
         config['directory_pattern'] = filemgmt.query_results_dict('select * from OPS_DIRECTORY_PATTERN',
                                                                   'name')
 
-        task_id = config['dts_task_id']  # get task id for dts
+        task_id = config['task_id']  # get task id for provenance
 
         for fpair in filepairs:
             handle_file(fpair[0], fpair[1], config, filemgmt, task_id)
@@ -353,6 +353,5 @@ def main(argv):
 
 ###########################################################################
 if __name__ == '__main__':
-    sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)  # turn off buffering of stdout
     stop_if_already_running()
     main(sys.argv[1:])
