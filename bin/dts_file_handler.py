@@ -1,8 +1,4 @@
 #!/usr/bin/env python
-# $Id$
-# $Rev::                                  $:  # Revision of last commit.
-# $LastChangedBy::                        $:  # Author of last commit.
-# $LastChangedDate::                      $:  # Date of last commit.
 
 """ For each file that was accepted by accept_dts_delivery,
     copy file to archive and register file in DB """
